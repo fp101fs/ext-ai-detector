@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Detector</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div class="container">
+  <h1>🤖 AI Detector</h1>
+
+  <div class="section">
+    <h2>OpenRouter API Key</h2>
+    <input type="password" id="apiKey" placeholder="sk-or-v1-..." size="30">
+    <button id="saveKey">Save</button>
+    <span id="keyStatus" class="status"></span>
+  </div>
+
+  <div class="section">
+    <h2>Detection Mode</h2>
+    <label>
+      <input type="radio" name="mode" value="openrouter" checked> OpenRouter (requires key)
+    </label>
+    <label>
+      <input type="radio" name="mode" value="heuristic"> Heuristic only (no key needed)
+    </label>
+    <label>
+      <input type="radio" name="mode" value="hybrid"> Hybrid (key + heuristic)
+    </label>
+  </div>
+
+  <div class="section">
+    <h2>Scan Options</h2>
+    <label>
+      Min paragraph length (words):
+      <input type="number" id="minWords" value="20" min="5" max="500">
+    </label>
+    <label>
+      Max paragraphs to scan:
+      <input type="number" id="maxParagraphs" value="50" min="5" max="200">
+    </label>
+  </div>
+
+  <button id="scanBtn">🔍 Scan This Page</button>
+
+  <div id="results" class="results hidden">
+    <h2>Results</h2>
+    <div id="scoreContainer">
+      <div class="score-circle" id="scoreCircle">--</div>
+      <div class="score-label" id="scoreLabel">AI Probability</div>
+    </div>
+    <div id="paragraphResults"></div>
+    <div id="summary"></div>
+  </div>
+
+  <div id="loading" class="loading hidden">Scanning...</div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>

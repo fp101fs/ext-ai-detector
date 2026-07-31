@@ -1,0 +1,16 @@
+/* Styles injected into the page for highlighting AI paragraphs */
+.ai-detector-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  background: rgba(233, 69, 96, 0.15);
+  color: #e94560;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.ai-detector-badge:hover {
+  background: rgba(233, 69, 96, 0.3);
+}
