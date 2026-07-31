@@ -8,25 +8,30 @@
 </head>
 <body>
 <div class="container">
-  <h1>🤖 AI Detector</h1>
+  <h1>AI Detector</h1>
 
   <div class="section">
     <h2>OpenRouter API Key</h2>
-    <input type="password" id="apiKey" placeholder="sk-or-v1-..." size="30">
-    <button id="saveKey">Save</button>
+    <div class="key-row">
+      <input type="password" id="apiKey" placeholder="sk-or-v1-...">
+      <button id="saveKey">Save</button>
+    </div>
     <span id="keyStatus" class="status"></span>
   </div>
 
   <div class="section">
     <h2>Detection Mode</h2>
     <label>
-      <input type="radio" name="mode" value="openrouter" checked> OpenRouter (requires key)
+      <input type="radio" name="mode" value="openrouter" checked>
+      OpenRouter (requires key)
     </label>
     <label>
-      <input type="radio" name="mode" value="heuristic"> Heuristic only (no key needed)
+      <input type="radio" name="mode" value="heuristic">
+      Heuristic only (no key needed)
     </label>
     <label>
-      <input type="radio" name="mode" value="hybrid"> Hybrid (key + heuristic)
+      <input type="radio" name="mode" value="hybrid">
+      Hybrid (key + heuristic)
     </label>
   </div>
 
@@ -42,11 +47,11 @@
     </label>
   </div>
 
-  <button id="scanBtn">🔍 Scan This Page</button>
+  <button id="scanBtn">Scan This Page</button>
 
   <div id="results" class="results hidden">
     <h2>Results</h2>
-    <div id="scoreContainer">
+    <div class="score-container">
       <div class="score-circle" id="scoreCircle">--</div>
       <div class="score-label" id="scoreLabel">AI Probability</div>
     </div>
@@ -54,7 +59,7 @@
     <div id="summary"></div>
   </div>
 
-  <div id="loading" class="loading hidden">Scanning...</div>
+  <div id="loading" class="loading hidden">Scanning page</div>
 </div>
 <script src="popup.js"></script>
 </body>

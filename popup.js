@@ -53,7 +53,7 @@
     resultsDiv.classList.add('hidden');
     loadingDiv.classList.remove('hidden');
     scanBtn.disabled = true;
-    scanBtn.textContent = 'Scanning...';
+    scanBtn.textContent = 'Scanning page';
 
     var mode = document.querySelector('input[name="mode"]:checked').value;
     var minWords = parseInt(document.getElementById('minWords').value) || 20;
@@ -68,14 +68,13 @@
         return;
       }
 
-      // Step 1: Inject content script and scan paragraphs
       chrome.scripting.executeScript({
         target: { tabId: tabs[0].id },
         func: scanParagraphs,
         args: [{ minWords: minWords, maxParagraphs: maxParagraphs }]
       }, function (results) {
         if (chrome.runtime.lastError || !results || !results.length || !results[0].result) {
-          loadingDiv.textContent = 'Error scanning page. Make sure the page is loaded and try again.';
+          loadingDiv.textContent = 'Error scanning page. Try refreshing the tab.';
           loadingDiv.classList.remove('hidden');
           scanBtn.disabled = false;
           scanBtn.textContent = 'Scan This Page';
@@ -91,7 +90,6 @@
           return;
         }
 
-        // Step 2: Send paragraphs to background for AI detection
         chrome.runtime.sendMessage({
           action: 'detectParagraphs',
           paragraphs: pageData.paragraphs,
@@ -113,16 +111,13 @@
             return;
           }
 
-          // Compute overall score
           var scores = detectionResults.map(function (r) { return r.aiProbability; }).filter(function (s) { return s !== null && s !== undefined; });
           var overallScore = scores.length > 0
             ? scores.reduce(function (a, b) { return a + b; }, 0) / scores.length
             : 0;
 
-          // Display results in popup
           displayResults(overallScore, detectionResults, pageData);
 
-          // Step 3: Highlight on the page via content script
           chrome.tabs.sendMessage(tabs[0].id, {
             action: 'highlight',
             results: detectionResults
@@ -146,7 +141,7 @@
     else if (pct < 60) scoreCircle.classList.add('medium');
     else scoreCircle.classList.add('high');
 
-    scoreLabel.textContent = 'AI Probability: ' + pct + '%';
+    scoreLabel.textContent = 'AI Probability';
 
     paraResults.innerHTML = '';
     var sorted = results.slice().sort(function (a, b) { return b.aiProbability - a.aiProbability; });
@@ -180,7 +175,6 @@
     return div.innerHTML;
   }
 
-  // This function runs in the page context (injected by executeScript)
   function scanParagraphs(options) {
     var minWords = options.minWords || 20;
     var maxParagraphs = options.maxParagraphs || 50;
