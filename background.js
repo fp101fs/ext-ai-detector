@@ -43,13 +43,14 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === 'detectParagraphs') {
     const paragraphs = Array.isArray(msg.paragraphs) ? msg.paragraphs : [];
     const mode = msg.mode || detectionMode;
+    const generation = msg.generation || 0;
     if (activeScan) {
       activeScan.controller.abort();
     }
-    const scan = { controller: new AbortController() };
+    const scan = { controller: new AbortController(), generation: generation };
     activeScan = scan;
     chrome.storage.local.set({ scanState: { status: 'scanning', results: [], total: paragraphs.length } });
-    detectParagraphs(paragraphs, mode, scan.controller.signal).then(function (results) {
+    detectParagraphs(paragraphs, mode, scan.controller.signal, generation).then(function (results) {
       chrome.storage.local.set({ scanState: { status: 'complete', results: results, total: paragraphs.length } });
       chrome.runtime.sendMessage({
         action: 'scanComplete',
@@ -81,7 +82,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 });
 
-async function detectParagraphs(paragraphs, mode, signal) {
+async function detectParagraphs(paragraphs, mode, signal, generation) {
   const results = [];
 
   for (const para of paragraphs) {
@@ -130,6 +131,7 @@ async function detectParagraphs(paragraphs, mode, signal) {
         action: 'scanProgress',
         completed: results.length,
         total: paragraphs.length,
+        generation: generation,
         result: results[results.length - 1]
       });
     } catch (e) {

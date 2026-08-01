@@ -16,6 +16,7 @@
   var activeTabId = null;
   var currentPageData = null;
   var scanRowElements = {};
+  var scanGeneration = 0;
 
   function resetScanControls(message) {
     if (message) loadingDiv.textContent = message;
@@ -47,15 +48,17 @@
     scoreLabel.textContent = 'AI Probability';
   }
 
-  function updateScanProgress() {
-    var scores = Object.keys(scanRowElements).map(function (key) {
-      var row = scanRowElements[key];
+  function recalcOverallScore() {
+    var scores = [];
+    var keys = Object.keys(scanRowElements);
+    for (var i = 0; i < keys.length; i++) {
+      var row = scanRowElements[keys[i]];
       var scoreText = row.querySelector('.para-score').textContent;
       var pct = parseInt(scoreText, 10);
-      if (isNaN(pct)) return null;
-      return pct / 100;
-    }).filter(function (s) { return s !== null; });
-
+      if (!isNaN(pct) && pct >= 0 && pct <= 100) {
+        scores.push(pct / 100);
+      }
+    }
     if (scores.length) {
       var avg = scores.reduce(function (sum, s) { return sum + s; }, 0) / scores.length;
       updateOverallScore(avg);
@@ -92,16 +95,6 @@
     });
   }
 
-  function restoreScanState(state) {
-    if (!state || !Array.isArray(state.results) || !state.results.length) return;
-    state.results.forEach(function (r) {
-      if (scanRowElements[r.index]) {
-        updateParagraphRow(r);
-      }
-    });
-    updateScanProgress();
-  }
-
   chrome.runtime.onMessage.addListener(function (msg) {
     if (msg.action === 'scanComplete') {
       if (msg.error) {
@@ -109,8 +102,10 @@
         return;
       }
       var finalResults = Array.isArray(msg.results) ? msg.results : [];
-      finalResults.forEach(updateParagraphRow);
-      updateScanProgress();
+      for (var i = 0; i < finalResults.length; i++) {
+        updateParagraphRow(finalResults[i]);
+      }
+      recalcOverallScore();
       updateSummary(finalResults, currentPageData);
       scanBtn.disabled = false;
       scanBtn.textContent = 'Scan This Page';
@@ -121,11 +116,13 @@
     }
 
     if (msg.action !== 'scanProgress') return;
+    if (msg.generation !== scanGeneration) return;
+
     loadingDiv.textContent = 'Scanning paragraph ' + msg.completed + ' of ' + msg.total;
     if (!msg.result) return;
 
     updateParagraphRow(msg.result);
-    updateScanProgress();
+    recalcOverallScore();
 
     if (currentPageData) {
       resultsDiv.classList.remove('hidden');
@@ -134,13 +131,6 @@
     if (activeTabId !== null) {
       chrome.tabs.sendMessage(activeTabId, { action: 'highlight', results: [msg.result] });
     }
-  });
-
-  chrome.storage.onChanged.addListener(function (changes, areaName) {
-    if (areaName !== 'local' || !changes.scanState) return;
-    var state = changes.scanState.newValue;
-    if (!state || !Array.isArray(state.results) || !state.results.length) return;
-    restoreScanState(state);
   });
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -180,6 +170,7 @@
   });
 
   scanBtn.addEventListener('click', function () {
+    scanGeneration++;
     resultsDiv.classList.add('hidden');
     loadingDiv.classList.remove('hidden');
     scanBtn.disabled = true;
@@ -219,18 +210,11 @@
         }
         initializeParagraphRows(pageData.paragraphs);
 
-        chrome.storage.local.get('scanState', function (items) {
-          var state = items.scanState;
-          if (state && Array.isArray(state.results) && state.results.length) {
-            restoreScanState(state);
-          }
-          resultsDiv.classList.remove('hidden');
-        });
-
         chrome.runtime.sendMessage({
           action: 'detectParagraphs',
           paragraphs: pageData.paragraphs,
-          mode: mode
+          mode: mode,
+          generation: scanGeneration
         }, function (detectionResults) {
           if (chrome.runtime.lastError || !detectionResults || !detectionResults.started) {
             resetScanControls('Detection error: ' + (chrome.runtime.lastError ? chrome.runtime.lastError.message : 'Could not start scanner.'));
