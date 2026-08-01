@@ -16,7 +16,16 @@
   });
 
   function highlightResults(results) {
-    clearHighlights();
+    // Only clear badges and detail cards, not outlines.
+    // Outlines are cleared once at the start of a new scan.
+    var badges = document.querySelectorAll('.ai-detector-badge');
+    for (var i = 0; i < badges.length; i++) {
+      badges[i].remove();
+    }
+    var detailCards = document.querySelectorAll('.ai-detector-detail');
+    for (var j = 0; j < detailCards.length; j++) {
+      detailCards[j].remove();
+    }
 
     results.forEach(function (r) {
       var allPs = document.querySelectorAll('p');

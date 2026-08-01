@@ -210,6 +210,8 @@
         }
         initializeParagraphRows(pageData.paragraphs);
 
+        chrome.tabs.sendMessage(activeTabId, { action: 'clearHighlights' });
+
         chrome.runtime.sendMessage({
           action: 'detectParagraphs',
           paragraphs: pageData.paragraphs,
