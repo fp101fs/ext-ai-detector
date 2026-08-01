@@ -71,6 +71,19 @@
     }
   });
 
+  chrome.storage.onChanged.addListener(function (changes, areaName) {
+    if (areaName !== 'local' || !changes.scanState) return;
+    var state = changes.scanState.newValue;
+    if (!state || !Array.isArray(state.results) || !state.results.length) return;
+    progressiveResults = state.results.slice();
+    state.results.forEach(updateParagraphResult);
+    var scores = state.results.map(function (result) { return result.aiProbability; });
+    if (scores.length) {
+      updateOverallScore(scores.reduce(function (sum, score) { return sum + score; }, 0) / scores.length);
+    }
+    resultsDiv.classList.remove('hidden');
+  });
+
   document.addEventListener('DOMContentLoaded', function () {
     chrome.storage.local.get(['apiKey', 'detectionMode', 'minWords', 'maxParagraphs'], function (items) {
       if (items.apiKey) apiKeyInput.value = items.apiKey;
