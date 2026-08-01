@@ -15,7 +15,7 @@
   var summaryDiv = document.getElementById('summary');
   var activeTabId = null;
   var currentPageData = null;
-  var progressiveResults = [];
+  var scanRowElements = {};
 
   function resetScanControls(message) {
     if (message) loadingDiv.textContent = message;
@@ -26,6 +26,82 @@
     stopBtn.disabled = false;
   }
 
+  function updateParagraphRow(r) {
+    var item = scanRowElements[r.index];
+    if (!item) return;
+    item.className = 'para-item ' + (r.aiProbability >= 0.5 ? 'ai' : 'human');
+    item.querySelector('.para-score').textContent = Math.round(r.aiProbability * 100) + '%';
+    var preview = (r.text || '').substring(0, 120);
+    if (r.text && r.text.length > 120) preview += '...';
+    item.querySelector('.para-text').textContent = preview;
+  }
+
+  function updateOverallScore(overallScore) {
+    resultsDiv.classList.remove('hidden');
+    var pct = Math.round(overallScore * 100);
+    scoreCircle.textContent = pct + '%';
+    scoreCircle.className = 'score-circle';
+    if (pct < 30) scoreCircle.classList.add('low');
+    else if (pct < 60) scoreCircle.classList.add('medium');
+    else scoreCircle.classList.add('high');
+    scoreLabel.textContent = 'AI Probability';
+  }
+
+  function updateScanProgress() {
+    var scores = Object.keys(scanRowElements).map(function (key) {
+      var row = scanRowElements[key];
+      var scoreText = row.querySelector('.para-score').textContent;
+      var pct = parseInt(scoreText, 10);
+      if (isNaN(pct)) return null;
+      return pct / 100;
+    }).filter(function (s) { return s !== null; });
+
+    if (scores.length) {
+      var avg = scores.reduce(function (sum, s) { return sum + s; }, 0) / scores.length;
+      updateOverallScore(avg);
+    }
+  }
+
+  function updateSummary(results, pageData) {
+    if (!pageData) return;
+    var aiCount = results.filter(function (r) { return r.aiProbability >= 0.5; }).length;
+    var humanCount = results.filter(function (r) { return r.aiProbability < 0.5; }).length;
+    var methods = {};
+    results.forEach(function (r) { methods[r.method] = true; });
+    var methodKeys = Object.keys(methods);
+
+    summaryDiv.innerHTML = '<strong>Summary</strong><br>' +
+      'Scanned: ' + results.length + ' paragraphs<br>' +
+      'AI-like: ' + aiCount + ' | Human-like: ' + humanCount + '<br>' +
+      'Method: ' + methodKeys.join(', ') + '<br>' +
+      'Page: ' + escapeHtml(pageData.title) + '<br>' +
+      'URL: ' + escapeHtml(pageData.url);
+  }
+
+  function initializeParagraphRows(paragraphs) {
+    paraResults.innerHTML = '';
+    scanRowElements = {};
+    paragraphs.forEach(function (paragraph) {
+      var item = document.createElement('div');
+      item.className = 'para-item pending';
+      item.dataset.paragraphIndex = paragraph.index;
+      item.innerHTML = '<span class="para-score">—</span>' +
+        '<span class="para-text">' + escapeHtml((paragraph.text || '').substring(0, 120)) + '</span>';
+      paraResults.appendChild(item);
+      scanRowElements[paragraph.index] = item;
+    });
+  }
+
+  function restoreScanState(state) {
+    if (!state || !Array.isArray(state.results) || !state.results.length) return;
+    state.results.forEach(function (r) {
+      if (scanRowElements[r.index]) {
+        updateParagraphRow(r);
+      }
+    });
+    updateScanProgress();
+  }
+
   chrome.runtime.onMessage.addListener(function (msg) {
     if (msg.action === 'scanComplete') {
       if (msg.error) {
@@ -33,8 +109,8 @@
         return;
       }
       var finalResults = Array.isArray(msg.results) ? msg.results : [];
-      progressiveResults = finalResults.slice();
-      renderAllResults();
+      finalResults.forEach(updateParagraphRow);
+      updateScanProgress();
       updateSummary(finalResults, currentPageData);
       scanBtn.disabled = false;
       scanBtn.textContent = 'Scan This Page';
@@ -48,21 +124,10 @@
     loadingDiv.textContent = 'Scanning paragraph ' + msg.completed + ' of ' + msg.total;
     if (!msg.result) return;
 
-    var existingIndex = progressiveResults.findIndex(function (result) {
-      return result.index === msg.result.index;
-    });
-    if (existingIndex === -1) {
-      progressiveResults.push(msg.result);
-    } else {
-      progressiveResults[existingIndex] = msg.result;
-    }
-
-    updateParagraphResult(msg.result);
+    updateParagraphRow(msg.result);
+    updateScanProgress();
 
     if (currentPageData) {
-      var scores = progressiveResults.map(function (result) { return result.aiProbability; });
-      var overallScore = scores.reduce(function (sum, score) { return sum + score; }, 0) / scores.length;
-      updateOverallScore(overallScore);
       resultsDiv.classList.remove('hidden');
     }
 
@@ -75,13 +140,7 @@
     if (areaName !== 'local' || !changes.scanState) return;
     var state = changes.scanState.newValue;
     if (!state || !Array.isArray(state.results) || !state.results.length) return;
-    progressiveResults = state.results.slice();
-    state.results.forEach(updateParagraphResult);
-    var scores = state.results.map(function (result) { return result.aiProbability; });
-    if (scores.length) {
-      updateOverallScore(scores.reduce(function (sum, score) { return sum + score; }, 0) / scores.length);
-    }
-    resultsDiv.classList.remove('hidden');
+    restoreScanState(state);
   });
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -128,7 +187,7 @@
     stopBtn.classList.remove('hidden');
     stopBtn.disabled = false;
     currentPageData = null;
-    progressiveResults = [];
+    scanRowElements = {};
     paraResults.innerHTML = '';
 
     var mode = document.querySelector('input[name="mode"]:checked').value;
@@ -158,15 +217,12 @@
           resetScanControls('No qualifying paragraphs found (need ' + minWords + '+ words per paragraph).');
           return;
         }
-        initializeParagraphResults(pageData.paragraphs);
+        initializeParagraphRows(pageData.paragraphs);
+
         chrome.storage.local.get('scanState', function (items) {
           var state = items.scanState;
-          if (!state || !Array.isArray(state.results) || !state.results.length) return;
-          progressiveResults = state.results.slice();
-          state.results.forEach(updateParagraphResult);
-          var scores = progressiveResults.map(function (result) { return result.aiProbability; });
-          if (scores.length) {
-            updateOverallScore(scores.reduce(function (sum, score) { return sum + score; }, 0) / scores.length);
+          if (state && Array.isArray(state.results) && state.results.length) {
+            restoreScanState(state);
           }
           resultsDiv.classList.remove('hidden');
         });
@@ -192,74 +248,6 @@
       resetScanControls('Scan stopped.');
     });
   });
-
-  function updateOverallScore(overallScore) {
-    resultsDiv.classList.remove('hidden');
-
-    var pct = Math.round(overallScore * 100);
-    scoreCircle.textContent = pct + '%';
-    scoreCircle.className = 'score-circle';
-    if (pct < 30) scoreCircle.classList.add('low');
-    else if (pct < 60) scoreCircle.classList.add('medium');
-    else scoreCircle.classList.add('high');
-
-    scoreLabel.textContent = 'AI Probability';
-  }
-
-  function updateParagraphResult(r) {
-    var item = paraResults.querySelector('[data-paragraph-index="' + r.index + '"]');
-    if (!item) {
-      item = document.createElement('div');
-      item.dataset.paragraphIndex = r.index;
-      item.className = 'para-item pending';
-      item.innerHTML = '<span class="para-score">—</span><span class="para-text">' + escapeHtml((r.text || '').substring(0, 120)) + '</span>';
-
-      var next = Array.from(paraResults.children).find(function (child) {
-        return Number(child.dataset.paragraphIndex) > Number(r.index);
-      });
-      paraResults.insertBefore(item, next || null);
-    }
-
-    item.className = 'para-item ' + (r.aiProbability >= 0.5 ? 'ai' : 'human');
-    item.querySelector('.para-score').textContent = Math.round(r.aiProbability * 100) + '%';
-    var preview = (r.text || '').substring(0, 120);
-    if (r.text && r.text.length > 120) preview += '...';
-    item.querySelector('.para-text').textContent = preview;
-  }
-
-  function renderAllResults() {
-    paraResults.innerHTML = '';
-    var sorted = progressiveResults.slice().sort(function (a, b) { return a.index - b.index; });
-    sorted.forEach(updateParagraphResult);
-  }
-
-  function updateSummary(results, pageData) {
-    if (!pageData) return;
-    var aiCount = results.filter(function (r) { return r.aiProbability >= 0.5; }).length;
-    var humanCount = results.filter(function (r) { return r.aiProbability < 0.5; }).length;
-    var methods = {};
-    results.forEach(function (r) { methods[r.method] = true; });
-    var methodKeys = Object.keys(methods);
-
-    summaryDiv.innerHTML = '<strong>Summary</strong><br>' +
-      'Scanned: ' + results.length + ' paragraphs<br>' +
-      'AI-like: ' + aiCount + ' | Human-like: ' + humanCount + '<br>' +
-      'Method: ' + methodKeys.join(', ') + '<br>' +
-      'Page: ' + escapeHtml(pageData.title) + '<br>' +
-      'URL: ' + escapeHtml(pageData.url);
-  }
-
-  function initializeParagraphResults(paragraphs) {
-    paraResults.innerHTML = '';
-    paragraphs.forEach(function (paragraph) {
-      var item = document.createElement('div');
-      item.className = 'para-item pending';
-      item.dataset.paragraphIndex = paragraph.index;
-      item.innerHTML = '<span class="para-score">—</span>' +
-        '<span class="para-text">' + escapeHtml((paragraph.text || '').substring(0, 120)) + '</span>';
-      paraResults.appendChild(item);
-    });
-  }
 
   function escapeHtml(str) {
     var div = document.createElement('div');
