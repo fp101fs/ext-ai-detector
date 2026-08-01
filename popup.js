@@ -60,10 +60,10 @@
     updateParagraphResult(msg.result);
 
     if (currentPageData) {
+      resultsDiv.classList.remove('hidden');
       var scores = progressiveResults.map(function (result) { return result.aiProbability; });
       var overallScore = scores.reduce(function (sum, score) { return sum + score; }, 0) / scores.length;
       updateOverallScore(overallScore);
-      resultsDiv.classList.remove('hidden');
     }
 
     if (activeTabId !== null) {
