@@ -212,7 +212,7 @@
       item = document.createElement('div');
       item.dataset.paragraphIndex = r.index;
       item.className = 'para-item pending';
-      item.innerHTML = '<span class="para-score">—</span><span class="para-text"></span>';
+      item.innerHTML = '<span class="para-score">—</span><span class="para-text">' + escapeHtml((r.text || '').substring(0, 120)) + '</span>';
 
       var next = Array.from(paraResults.children).find(function (child) {
         return Number(child.dataset.paragraphIndex) > Number(r.index);
