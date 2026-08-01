@@ -98,7 +98,15 @@
   chrome.runtime.onMessage.addListener(function (msg) {
     if (msg.action === 'scanComplete') {
       if (msg.error) {
-        resetScanControls(msg.cancelled ? 'Scan stopped.' : 'Error: ' + msg.error);
+        if (msg.cancelled) {
+          loadingDiv.classList.add('hidden');
+          scanBtn.disabled = false;
+          scanBtn.textContent = 'Scan This Page';
+          stopBtn.classList.add('hidden');
+          stopBtn.disabled = false;
+        } else {
+          resetScanControls('Error: ' + msg.error);
+        }
         return;
       }
       var finalResults = Array.isArray(msg.results) ? msg.results : [];
@@ -231,7 +239,11 @@
     stopBtn.disabled = true;
     loadingDiv.textContent = 'Stopping scan…';
     chrome.runtime.sendMessage({ action: 'cancelScan' }, function () {
-      resetScanControls('Scan stopped.');
+      loadingDiv.classList.add('hidden');
+      scanBtn.disabled = false;
+      scanBtn.textContent = 'Scan This Page';
+      stopBtn.classList.add('hidden');
+      stopBtn.disabled = false;
     });
   });
 
