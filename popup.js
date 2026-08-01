@@ -57,7 +57,7 @@
       progressiveResults[existingIndex] = msg.result;
     }
 
-    renderAllResults();
+    updateParagraphResult(msg.result);
 
     if (currentPageData) {
       var scores = progressiveResults.map(function (result) { return result.aiProbability; });
