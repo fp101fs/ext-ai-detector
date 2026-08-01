@@ -3,13 +3,21 @@
 
 let apiKey = '';
 let detectionMode = 'openrouter';
+let activeScan = null;
 
-chrome.runtime.onInstalled.addListener(function () {
-  chrome.storage.local.get(['apiKey', 'detectionMode', 'minWords', 'maxParagraphs'], function (items) {
-    apiKey = items.apiKey || '';
+function loadSettings() {
+  chrome.storage.local.get(['apiKey', 'detectionMode'], function (items) {
+    apiKey = typeof items.apiKey === 'string' ? items.apiKey : '';
     detectionMode = items.detectionMode || 'openrouter';
   });
+}
+
+chrome.runtime.onInstalled.addListener(function () {
+  loadSettings();
 });
+
+// Service workers can be restarted without firing onInstalled.
+loadSettings();
 
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === 'saveKey') {
@@ -33,30 +41,64 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 
   if (msg.action === 'detectParagraphs') {
-    const paragraphs = msg.paragraphs;
+    const paragraphs = Array.isArray(msg.paragraphs) ? msg.paragraphs : [];
     const mode = msg.mode || detectionMode;
-    detectParagraphs(paragraphs, mode).then(function (results) {
-      sendResponse(results);
+    if (activeScan) {
+      activeScan.controller.abort();
+    }
+    const scan = { controller: new AbortController() };
+    activeScan = scan;
+    chrome.storage.local.set({ scanState: { status: 'scanning', results: [], total: paragraphs.length } });
+    detectParagraphs(paragraphs, mode, scan.controller.signal).then(function (results) {
+      chrome.storage.local.set({ scanState: { status: 'complete', results: results, total: paragraphs.length } });
+      chrome.runtime.sendMessage({
+        action: 'scanComplete',
+        results: results
+      });
     }).catch(function (err) {
-      sendResponse({ error: err.message });
+      chrome.storage.local.set({ scanState: { status: err.name === 'AbortError' ? 'cancelled' : 'error', results: [], total: paragraphs.length, error: err.message } });
+      chrome.runtime.sendMessage({
+        action: 'scanComplete',
+        error: err.message,
+        cancelled: err.name === 'AbortError'
+      });
+    }).finally(function () {
+      if (activeScan === scan) activeScan = null;
     });
-    return true;
+    sendResponse({ ok: true, started: true });
+    return false;
+  }
+
+  if (msg.action === 'cancelScan') {
+    if (activeScan) {
+      activeScan.controller.abort();
+      activeScan = null;
+      sendResponse({ ok: true, cancelled: true });
+    } else {
+      sendResponse({ ok: false, cancelled: false });
+    }
+    return false;
   }
 });
 
-async function detectParagraphs(paragraphs, mode) {
+async function detectParagraphs(paragraphs, mode, signal) {
   const results = [];
 
   for (const para of paragraphs) {
+    if (signal && signal.aborted) {
+      const error = new DOMException('Scan cancelled', 'AbortError');
+      throw error;
+    }
     let aiProb = null;
     let method = 'heuristic';
 
     if ((mode === 'openrouter' || mode === 'hybrid') && apiKey) {
       try {
-        aiProb = await callOpenRouter(para.text);
+        aiProb = await callOpenRouter(para.text, signal);
         method = 'openrouter';
       } catch (e) {
-        console.warn('OpenRouter detection failed:', e.message);
+        if (e.name === 'AbortError') throw e;
+        console.warn('OpenRouter detection failed:', e.message, 'paragraph:', para.index);
       }
     }
 
@@ -78,56 +120,125 @@ async function detectParagraphs(paragraphs, mode) {
       aiProbability: aiProb,
       method: method
     });
+
+    chrome.storage.local.set({
+      scanState: { status: 'scanning', results: results.slice(), total: paragraphs.length }
+    });
+
+    try {
+      chrome.runtime.sendMessage({
+        action: 'scanProgress',
+        completed: results.length,
+        total: paragraphs.length,
+        result: results[results.length - 1]
+      });
+    } catch (e) {
+      // The popup may have closed; the scan itself can still finish.
+    }
   }
 
   return results;
 }
 
-async function callOpenRouter(text) {
-  const truncated = text.substring(0, 1000);
-  const escaped = truncated.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + apiKey,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://chrome-ai-detector.local',
-      'X-Title': 'AI Detector Extension'
-    },
-    body: JSON.stringify({
-      model: 'openai/gpt-oss-20b',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an AI text detector. Analyze the provided text and return ONLY a JSON object with a single field "ai_probability" (a number between 0 and 1). No other text.'
-        },
-        {
-          role: 'user',
-          content: 'Text: "' + escaped + '"\n\nReturn JSON: {"ai_probability": <number>}'
-        }
-      ],
-      temperature: 0.0,
-      max_tokens: 50
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error('OpenRouter API returned ' + response.status);
+async function callOpenRouter(text, scanSignal) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('Paragraph text is empty');
   }
 
-  const data = await response.json();
-  const content = data.choices[0].message.content.trim();
+  const truncated = text.substring(0, 1000);
+  const escaped = truncated.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(function () { controller.abort(); }, 30000);
+  function abortRequest() { controller.abort(); }
+  if (scanSignal) {
+    if (scanSignal.aborted) abortRequest();
+    else scanSignal.addEventListener('abort', abortRequest, { once: true });
+  }
 
   try {
-    const parsed = JSON.parse(content);
-    return Math.max(0, Math.min(1, parsed.ai_probability));
-  } catch (e) {
-    const match = content.match(/ai_probability["\s:]+(\d+\.?\d*)/);
-    if (match) {
-      return Math.max(0, Math.min(1, parseFloat(match[1])));
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://chrome-ai-detector.local',
+        'X-Title': 'AI Detector Extension'
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-20b',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an AI text detector. Analyze the provided text and return ONLY a JSON object with a single field "ai_probability" (a number between 0 and 1). No other text.'
+          },
+          {
+            role: 'user',
+            content: 'Text: "' + escaped + '"\n\nReturn JSON: {"ai_probability": <number>}'
+          }
+        ],
+        temperature: 0.0,
+        max_tokens: 512
+      }),
+      signal: controller.signal
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error('OpenRouter returned invalid JSON');
     }
-    throw new Error('Could not parse OpenRouter response');
+
+    if (!response.ok || data.error) {
+      const message = data.error && data.error.message ? data.error.message : 'HTTP ' + response.status;
+      throw new Error('OpenRouter API error: ' + message);
+    }
+
+    const choice = data && data.choices && data.choices[0];
+    if (!choice) throw new Error('OpenRouter returned no choices');
+
+    const candidates = [
+      choice.message && choice.message.content,
+      choice.message && choice.message.reasoning_content,
+      choice.message && choice.message.reasoning,
+      choice.text
+    ];
+
+    for (const candidate of candidates) {
+      const content = Array.isArray(candidate)
+        ? candidate.map(function (part) {
+          return part && (part.text || part.content) ? (part.text || part.content) : '';
+        }).join('').trim()
+        : typeof candidate === 'string' ? candidate.trim() : '';
+
+      if (!content) continue;
+
+      try {
+        const parsed = JSON.parse(content);
+        const probability = Number(parsed.ai_probability);
+        if (Number.isFinite(probability)) {
+          return Math.max(0, Math.min(1, probability));
+        }
+      } catch (e) {
+        // Continue with the regex extractor for surrounding prose or reasoning.
+      }
+
+      const match = content.match(/ai_probability["\s:=]+(0?\.\d+|1(?:\.0+)?|\d+(?:\.\d+)?)/i);
+      if (match) {
+        return Math.max(0, Math.min(1, parseFloat(match[1])));
+      }
+    }
+
+    const finishReason = choice.finish_reason || choice.native_finish_reason || 'unknown';
+    throw new Error('Could not parse OpenRouter response (finish_reason=' + finishReason + ')');
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error('OpenRouter request timed out after 30 seconds');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+    if (scanSignal) scanSignal.removeEventListener('abort', abortRequest);
   }
 }
 

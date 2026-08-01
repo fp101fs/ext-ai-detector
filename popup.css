@@ -191,6 +191,29 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+.scan-actions {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.scan-actions button {
+  margin-top: var(--space-2);
+}
+
+.stop-btn {
+  background: var(--danger);
+}
+
+.stop-btn:hover {
+  background: #dc2626;
+}
+
+.hidden {
+  display: none !important;
+}
+
 /* Status */
 .status {
   font-size: 11px;
@@ -308,6 +331,12 @@ button:focus-visible {
 .para-item.human {
   border-left-color: var(--success);
   background: var(--success-bg);
+}
+
+.para-item.pending {
+  border-left-color: var(--border);
+  color: var(--text-dim);
+  opacity: 0.7;
 }
 
 .para-item .para-score {

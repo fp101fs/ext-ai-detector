@@ -47,7 +47,10 @@
     </label>
   </div>
 
-  <button id="scanBtn">Scan This Page</button>
+  <div class="scan-actions">
+    <button id="scanBtn">Scan This Page</button>
+    <button id="stopBtn" class="stop-btn hidden" type="button">Stop scan</button>
+  </div>
 
   <div id="results" class="results hidden">
     <h2>Results</h2>
@@ -59,7 +62,7 @@
     <div id="summary"></div>
   </div>
 
-  <div id="loading" class="loading hidden">Scanning page</div>
+  <div id="loading" class="loading hidden" role="status" aria-live="polite">Scanning page</div>
 </div>
 <script src="popup.js"></script>
 </body>
