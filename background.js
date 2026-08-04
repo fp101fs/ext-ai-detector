@@ -213,7 +213,7 @@ async function callOpenRouter(text) {
       'X-Title': 'AI Detector Extension'
     },
     body: JSON.stringify({
-      model: 'openai/gpt-oss-20b',
+      model: 'openai/gpt-5.6-luna',
       messages: [
         {
           role: 'system',
