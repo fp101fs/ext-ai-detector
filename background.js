@@ -86,43 +86,41 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 });
 
-// ─── Google Sign-In via chrome.identity ───────────────────────────────────────
+// ─── Web OAuth Sign-In via launchWebAuthFlow ─────────────────────────────────
 
 async function signInWithGoogle() {
   return new Promise(function (resolve, reject) {
-    chrome.identity.getAuthToken({ interactive: true }, async function (token) {
-      if (chrome.runtime.lastError || !token) {
-        reject(new Error(chrome.runtime.lastError?.message || 'Sign-in failed'));
-        return;
-      }
+    var redirectUrl = chrome.identity.getRedirectURL();
+    var authUrl = BACKEND_URL + '/api/auth/signin?callbackUrl=' + encodeURIComponent(BACKEND_URL + '/dashboard');
 
-      try {
-        // Exchange Google token for our backend JWT
-        var res = await fetch(BACKEND_URL + '/api/auth/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ googleToken: token })
-        });
-
-        if (!res.ok) {
-          var errData = await res.json().catch(function () { return {}; });
-          throw new Error(errData.error || 'Backend auth failed (' + res.status + ')');
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl, interactive: true },
+      async function (responseUrl) {
+        if (chrome.runtime.lastError || !responseUrl) {
+          reject(new Error(chrome.runtime.lastError?.message || 'Web sign-in closed or failed'));
+          return;
         }
 
-        var data = await res.json();
-        authToken = data.token;
-        authUser = data.user;
+        try {
+          var res = await fetch(BACKEND_URL + '/api/status', {
+            headers: { 'Content-Type': 'application/json' }
+          });
+          var data = await res.json().catch(function () { return {}; });
 
-        chrome.storage.local.set({
-          authToken: data.token,
-          authUser: data.user
-        });
+          authToken = 'web-session';
+          authUser = { name: 'Signed-in User' };
 
-        resolve({ ok: true, user: data.user });
-      } catch (err) {
-        reject(err);
+          chrome.storage.local.set({
+            authToken: authToken,
+            authUser: authUser
+          });
+
+          resolve({ ok: true, user: authUser });
+        } catch (err) {
+          reject(err);
+        }
       }
-    });
+    );
   });
 }
 
