@@ -191,29 +191,6 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.scan-actions {
-  display: grid;
-  grid-template-columns: 1fr 96px;
-  gap: var(--space-2);
-  align-items: stretch;
-}
-
-.scan-actions button {
-  margin-top: var(--space-2);
-}
-
-.stop-btn {
-  background: var(--danger);
-}
-
-.stop-btn:hover {
-  background: #dc2626;
-}
-
-.hidden {
-  display: none !important;
-}
-
 /* Status */
 .status {
   font-size: 11px;
@@ -333,12 +310,6 @@ button:focus-visible {
   background: var(--success-bg);
 }
 
-.para-item.pending {
-  border-left-color: var(--border);
-  color: var(--text-dim);
-  opacity: 0.7;
-}
-
 .para-item .para-score {
   flex-shrink: 0;
   font-weight: 700;
@@ -429,4 +400,90 @@ button:focus-visible {
   margin-top: 0;
   font-size: 12px;
   min-height: 36px;
+}
+
+/* ─── Auth Section ─────────────────────────────────────────────────────────── */
+
+.auth-section {
+  text-align: center;
+}
+
+.auth-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: var(--space-3);
+}
+
+.btn-google {
+  background: #ffffff;
+  color: #1f1f1f;
+  font-weight: 600;
+  border: 1px solid #dadce0;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-google:hover {
+  background: #f8f9fa;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.btn-google svg {
+  flex-shrink: 0;
+}
+
+/* Signed-in user bar */
+.user-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.user-info span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  width: auto !important;
+  padding: var(--space-1) var(--space-3) !important;
+  margin-top: 0 !important;
+  font-size: 11px !important;
+  min-height: 28px !important;
+  background: var(--surface-hover);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.btn-sm:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Divider */
+.divider {
+  display: flex;
+  align-items: center;
+  margin: var(--space-3) 0;
+  gap: var(--space-3);
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.divider span {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }

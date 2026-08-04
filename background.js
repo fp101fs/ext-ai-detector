@@ -1,23 +1,31 @@
 // background.js — Service worker that handles API calls and orchestration
 'use strict';
 
-let apiKey = '';
-let detectionMode = 'openrouter';
-let activeScan = null;
+// ─── Configuration ────────────────────────────────────────────────────────────
+// Change this to your deployed Vercel URL (e.g. https://ai-scan.vercel.app)
+var BACKEND_URL = 'http://localhost:3000';
 
-function loadSettings() {
-  chrome.storage.local.get(['apiKey', 'detectionMode'], function (items) {
-    apiKey = typeof items.apiKey === 'string' ? items.apiKey : '';
-    detectionMode = items.detectionMode || 'openrouter';
-  });
-}
+var apiKey = '';
+var detectionMode = 'openrouter';
+var authToken = '';
+var authUser = null;
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(function () {
-  loadSettings();
+  chrome.storage.local.get(
+    ['apiKey', 'detectionMode', 'minWords', 'maxParagraphs', 'authToken', 'authUser', 'backendUrl'],
+    function (items) {
+      apiKey = items.apiKey || '';
+      detectionMode = items.detectionMode || 'openrouter';
+      authToken = items.authToken || '';
+      authUser = items.authUser || null;
+      if (items.backendUrl) BACKEND_URL = items.backendUrl;
+    }
+  );
 });
 
-// Service workers can be restarted without firing onInstalled.
-loadSettings();
+// ─── Message handler ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === 'saveKey') {
@@ -34,72 +42,138 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 
   if (msg.action === 'getSettings') {
-    chrome.storage.local.get(['apiKey', 'detectionMode', 'minWords', 'maxParagraphs'], function (items) {
-      sendResponse(items);
+    chrome.storage.local.get(
+      ['apiKey', 'detectionMode', 'minWords', 'maxParagraphs', 'authToken', 'authUser', 'backendUrl'],
+      function (items) {
+        sendResponse(items);
+      }
+    );
+    return true;
+  }
+
+  if (msg.action === 'signIn') {
+    signInWithGoogle().then(function (result) {
+      sendResponse(result);
+    }).catch(function (err) {
+      sendResponse({ error: err.message });
     });
     return true;
   }
 
-  if (msg.action === 'detectParagraphs') {
-    const paragraphs = Array.isArray(msg.paragraphs) ? msg.paragraphs : [];
-    const mode = msg.mode || detectionMode;
-    const generation = msg.generation || 0;
-    if (activeScan) {
-      activeScan.controller.abort();
-    }
-    const scan = { controller: new AbortController(), generation: generation };
-    activeScan = scan;
-    chrome.storage.local.set({ scanState: { status: 'scanning', results: [], total: paragraphs.length } });
-    detectParagraphs(paragraphs, mode, scan.controller.signal, generation).then(function (results) {
-      chrome.storage.local.set({ scanState: { status: 'complete', results: results, total: paragraphs.length } });
-      chrome.runtime.sendMessage({
-        action: 'scanComplete',
-        results: results
-      });
-    }).catch(function (err) {
-      chrome.storage.local.set({ scanState: { status: err.name === 'AbortError' ? 'cancelled' : 'error', results: [], total: paragraphs.length, error: err.message } });
-      chrome.runtime.sendMessage({
-        action: 'scanComplete',
-        error: err.message,
-        cancelled: err.name === 'AbortError'
-      });
-    }).finally(function () {
-      if (activeScan === scan) activeScan = null;
+  if (msg.action === 'signOut') {
+    authToken = '';
+    authUser = null;
+    chrome.storage.local.remove(['authToken', 'authUser']);
+    // Also revoke the Chrome identity token cache
+    chrome.identity.getAuthToken({ interactive: false }, function (token) {
+      if (token) {
+        chrome.identity.removeCachedAuthToken({ token: token });
+      }
     });
-    sendResponse({ ok: true, started: true });
+    sendResponse({ ok: true });
     return false;
   }
 
-  if (msg.action === 'cancelScan') {
-    if (activeScan) {
-      activeScan.controller.abort();
-      activeScan = null;
-      sendResponse({ ok: true, cancelled: true });
-    } else {
-      sendResponse({ ok: false, cancelled: false });
-    }
-    return false;
+  if (msg.action === 'detectParagraphs') {
+    var paragraphs = msg.paragraphs;
+    var mode = msg.mode || detectionMode;
+    detectParagraphs(paragraphs, mode).then(function (results) {
+      sendResponse(results);
+    }).catch(function (err) {
+      sendResponse({ error: err.message });
+    });
+    return true;
   }
 });
 
-async function detectParagraphs(paragraphs, mode, signal, generation) {
-  const results = [];
+// ─── Google Sign-In via chrome.identity ───────────────────────────────────────
 
-  for (const para of paragraphs) {
-    if (signal && signal.aborted) {
-      const error = new DOMException('Scan cancelled', 'AbortError');
-      throw error;
+async function signInWithGoogle() {
+  return new Promise(function (resolve, reject) {
+    chrome.identity.getAuthToken({ interactive: true }, async function (token) {
+      if (chrome.runtime.lastError || !token) {
+        reject(new Error(chrome.runtime.lastError?.message || 'Sign-in failed'));
+        return;
+      }
+
+      try {
+        // Exchange Google token for our backend JWT
+        var res = await fetch(BACKEND_URL + '/api/auth/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ googleToken: token })
+        });
+
+        if (!res.ok) {
+          var errData = await res.json().catch(function () { return {}; });
+          throw new Error(errData.error || 'Backend auth failed (' + res.status + ')');
+        }
+
+        var data = await res.json();
+        authToken = data.token;
+        authUser = data.user;
+
+        chrome.storage.local.set({
+          authToken: data.token,
+          authUser: data.user
+        });
+
+        resolve({ ok: true, user: data.user });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+// ─── Detection orchestration ──────────────────────────────────────────────────
+
+async function detectParagraphs(paragraphs, mode) {
+  // Try backend first (server-side OpenRouter key, no user key needed)
+  if (authToken && (mode === 'openrouter' || mode === 'hybrid')) {
+    try {
+      return await detectViaBackend(paragraphs, mode);
+    } catch (e) {
+      console.warn('Backend detection failed, falling back to direct:', e.message);
     }
-    let aiProb = null;
-    let method = 'heuristic';
+  }
+
+  // Fall back to direct OpenRouter (user needs their own key)
+  return await detectDirect(paragraphs, mode);
+}
+
+async function detectViaBackend(paragraphs, mode) {
+  var res = await fetch(BACKEND_URL + '/api/scan', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + authToken
+    },
+    body: JSON.stringify({ paragraphs: paragraphs, mode: mode })
+  });
+
+  if (!res.ok) {
+    var errData = await res.json().catch(function () { return {}; });
+    throw new Error(errData.error || 'Backend scan failed (' + res.status + ')');
+  }
+
+  return await res.json();
+}
+
+async function detectDirect(paragraphs, mode) {
+  var results = [];
+
+  for (var i = 0; i < paragraphs.length; i++) {
+    var para = paragraphs[i];
+    var aiProb = null;
+    var method = 'heuristic';
 
     if ((mode === 'openrouter' || mode === 'hybrid') && apiKey) {
       try {
-        aiProb = await callOpenRouter(para.text, signal);
+        aiProb = await callOpenRouter(para.text);
         method = 'openrouter';
       } catch (e) {
-        if (e.name === 'AbortError') throw e;
-        console.warn('OpenRouter detection failed:', e.message, 'paragraph:', para.index);
+        console.warn('OpenRouter detection failed:', e.message);
       }
     }
 
@@ -109,7 +183,7 @@ async function detectParagraphs(paragraphs, mode, signal, generation) {
     }
 
     if (mode === 'hybrid') {
-      const heuristic = heuristicScore(para.text);
+      var heuristic = heuristicScore(para.text);
       aiProb = aiProb * 0.7 + heuristic * 0.3;
       method = 'hybrid';
     }
@@ -121,148 +195,82 @@ async function detectParagraphs(paragraphs, mode, signal, generation) {
       aiProbability: aiProb,
       method: method
     });
-
-    chrome.storage.local.set({
-      scanState: { status: 'scanning', results: results.slice(), total: paragraphs.length }
-    });
-
-    try {
-      chrome.runtime.sendMessage({
-        action: 'scanProgress',
-        completed: results.length,
-        total: paragraphs.length,
-        generation: generation,
-        result: results[results.length - 1]
-      });
-    } catch (e) {
-      // The popup may have closed; the scan itself can still finish.
-    }
   }
 
   return results;
 }
 
-async function callOpenRouter(text, scanSignal) {
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('Paragraph text is empty');
+// ─── Direct OpenRouter call (fallback when not signed in) ─────────────────────
+
+async function callOpenRouter(text) {
+  var truncated = text.substring(0, 1000);
+  var escaped = truncated.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
+
+  var response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + apiKey,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://chrome-ai-detector.local',
+      'X-Title': 'AI Detector Extension'
+    },
+    body: JSON.stringify({
+      model: 'openai/gpt-oss-20b',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an AI text detector. Analyze the provided text and return ONLY a JSON object with a single field "ai_probability" (a number between 0 and 1). No other text.'
+        },
+        {
+          role: 'user',
+          content: 'Text: "' + escaped + '"\n\nReturn JSON: {"ai_probability": <number>}'
+        }
+      ],
+      temperature: 0.0,
+      max_tokens: 50
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('OpenRouter API returned ' + response.status);
   }
 
-  const truncated = text.substring(0, 1000);
-  const escaped = truncated.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
-  const controller = new AbortController();
-  const timeoutId = setTimeout(function () { controller.abort(); }, 30000);
-  function abortRequest() { controller.abort(); }
-  if (scanSignal) {
-    if (scanSignal.aborted) abortRequest();
-    else scanSignal.addEventListener('abort', abortRequest, { once: true });
-  }
+  var data = await response.json();
+  var content = data.choices[0].message.content.trim();
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://chrome-ai-detector.local',
-        'X-Title': 'AI Detector Extension'
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-oss-20b',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an AI text detector. Analyze the provided text and return ONLY a JSON object with a single field "ai_probability" (a number between 0 and 1). No other text.'
-          },
-          {
-            role: 'user',
-            content: 'Text: "' + escaped + '"\n\nReturn JSON: {"ai_probability": <number>}'
-          }
-        ],
-        temperature: 0.0,
-        max_tokens: 512
-      }),
-      signal: controller.signal
-    });
-
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      throw new Error('OpenRouter returned invalid JSON');
-    }
-
-    if (!response.ok || data.error) {
-      const message = data.error && data.error.message ? data.error.message : 'HTTP ' + response.status;
-      throw new Error('OpenRouter API error: ' + message);
-    }
-
-    const choice = data && data.choices && data.choices[0];
-    if (!choice) throw new Error('OpenRouter returned no choices');
-
-    const candidates = [
-      choice.message && choice.message.content,
-      choice.message && choice.message.reasoning_content,
-      choice.message && choice.message.reasoning,
-      choice.text
-    ];
-
-    for (const candidate of candidates) {
-      const content = Array.isArray(candidate)
-        ? candidate.map(function (part) {
-          return part && (part.text || part.content) ? (part.text || part.content) : '';
-        }).join('').trim()
-        : typeof candidate === 'string' ? candidate.trim() : '';
-
-      if (!content) continue;
-
-      try {
-        const parsed = JSON.parse(content);
-        const probability = Number(parsed.ai_probability);
-        if (Number.isFinite(probability)) {
-          return Math.max(0, Math.min(1, probability));
-        }
-      } catch (e) {
-        // Continue with the regex extractor for surrounding prose or reasoning.
-      }
-
-      const match = content.match(/ai_probability["\s:=]+(0?\.\d+|1(?:\.0+)?|\d+(?:\.\d+)?)/i);
-      if (match) {
-        return Math.max(0, Math.min(1, parseFloat(match[1])));
-      }
-    }
-
-    const finishReason = choice.finish_reason || choice.native_finish_reason || 'unknown';
-    throw new Error('Could not parse OpenRouter response (finish_reason=' + finishReason + ')');
+    var parsed = JSON.parse(content);
+    return Math.max(0, Math.min(1, parsed.ai_probability));
   } catch (e) {
-    if (e.name === 'AbortError') {
-      throw new Error('OpenRouter request timed out after 30 seconds');
+    var match = content.match(/ai_probability["\\s:]+(\\d+\\.?\\d*)/);
+    if (match) {
+      return Math.max(0, Math.min(1, parseFloat(match[1])));
     }
-    throw e;
-  } finally {
-    clearTimeout(timeoutId);
-    if (scanSignal) scanSignal.removeEventListener('abort', abortRequest);
+    throw new Error('Could not parse OpenRouter response');
   }
 }
 
+// ─── Heuristic scoring (fully offline) ────────────────────────────────────────
+
 function heuristicScore(text) {
-  const sentences = text.split(/[.!?]+/).filter(function (s) { return s.trim().length > 3; });
+  var sentences = text.split(/[.!?]+/).filter(function (s) { return s.trim().length > 3; });
   if (sentences.length < 2) return 0.3;
 
   // 1. Sentence length variance
-  const lengths = sentences.map(function (s) { return s.trim().split(/\s+/).length; });
-  const avgLen = lengths.reduce(function (a, b) { return a + b; }, 0) / lengths.length;
-  const variance = lengths.reduce(function (sum, l) { return sum + Math.pow(l - avgLen, 2); }, 0) / lengths.length;
-  const cv = Math.sqrt(variance) / (avgLen || 1);
-  const uniformityScore = Math.max(0, 1 - (cv / 0.8));
+  var lengths = sentences.map(function (s) { return s.trim().split(/\s+/).length; });
+  var avgLen = lengths.reduce(function (a, b) { return a + b; }, 0) / lengths.length;
+  var variance = lengths.reduce(function (sum, l) { return sum + Math.pow(l - avgLen, 2); }, 0) / lengths.length;
+  var cv = Math.sqrt(variance) / (avgLen || 1);
+  var uniformityScore = Math.max(0, 1 - (cv / 0.8));
 
   // 2. Vocabulary richness (type-token ratio)
-  const words = text.toLowerCase().match(/\b[a-z]+\b/g) || [];
-  const uniqueWords = new Set(words);
-  const ttr = words.length > 0 ? uniqueWords.size / words.length : 0;
-  const richnessScore = Math.max(0, 1 - (ttr / 0.5));
+  var words = text.toLowerCase().match(/\b[a-z]+\b/g) || [];
+  var uniqueWords = new Set(words);
+  var ttr = words.length > 0 ? uniqueWords.size / words.length : 0;
+  var richnessScore = Math.max(0, 1 - (ttr / 0.5));
 
   // 3. Common AI phrases
-  const aiPhrases = [
+  var aiPhrases = [
     'in conclusion', 'furthermore', 'moreover', 'it is important to note',
     'additionally', 'in summary', 'delve into', 'tapestry', 'landscape',
     'crucial', 'pivotal', 'testament', 'seamless', 'foster', 'nuanced',
@@ -278,33 +286,33 @@ function heuristicScore(text) {
     'it is worth mentioning', 'it is worth highlighting', 'needless to say',
     'without a doubt', 'in essence', 'in other words', 'to put it differently'
   ];
-  const textLower = text.toLowerCase();
-  let aiPhraseCount = 0;
+  var textLower = text.toLowerCase();
+  var aiPhraseCount = 0;
   aiPhrases.forEach(function (phrase) {
     if (textLower.indexOf(phrase) !== -1) aiPhraseCount++;
   });
-  const phraseScore = Math.min(1, aiPhraseCount / 5);
+  var phraseScore = Math.min(1, aiPhraseCount / 5);
 
   // 4. Repetition of sentence starters
-  const starters = sentences.map(function (s) {
+  var starters = sentences.map(function (s) {
     return s.trim().split(/\s+/).slice(0, 3).join(' ').toLowerCase();
   });
-  const starterCounts = {};
+  var starterCounts = {};
   starters.forEach(function (s) { starterCounts[s] = (starterCounts[s] || 0) + 1; });
-  const maxStarterRep = Math.max.apply(null, Object.values(starterCounts));
-  const repetitionScore = Math.min(1, (maxStarterRep - 1) / 3);
+  var maxStarterRep = Math.max.apply(null, Object.values(starterCounts));
+  var repetitionScore = Math.min(1, (maxStarterRep - 1) / 3);
 
   // 5. Hedging / qualifier density
-  const hedges = ['may', 'might', 'could', 'potentially', 'possibly', 'seems', 'appears', 'likely', 'tends to'];
-  let hedgeCount = 0;
+  var hedges = ['may', 'might', 'could', 'potentially', 'possibly', 'seems', 'appears', 'likely', 'tends to'];
+  var hedgeCount = 0;
   hedges.forEach(function (h) {
-    const regex = new RegExp('\\b' + h + '\\b', 'g');
-    const matches = textLower.match(regex);
+    var regex = new RegExp('\\b' + h + '\\b', 'g');
+    var matches = textLower.match(regex);
     if (matches) hedgeCount += matches.length;
   });
-  const hedgeScore = Math.min(1, hedgeCount / sentences.length);
+  var hedgeScore = Math.min(1, hedgeCount / sentences.length);
 
-  const score = (
+  var score = (
     uniformityScore * 0.25 +
     richnessScore * 0.20 +
     phraseScore * 0.25 +
