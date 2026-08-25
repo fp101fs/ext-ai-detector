@@ -3,90 +3,113 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Detector</title>
+<title>AI Scan — AI Detector</title>
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
 <div class="container">
-  <h1>AI Detector</h1>
-
-  <!-- Auth Section -->
-  <div class="section auth-section" id="authSection">
-    <div id="signedOut">
-      <p class="auth-hint">Sign in for free AI detection — no API key needed</p>
-      <button id="signInBtn" class="btn-google">
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
-          <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957C.347 6.175 0 7.547 0 9s.348 2.825.957 4.039l3.007-2.332z" fill="#FBBC05"/>
-          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
-        </svg>
-        Sign in with Google
-      </button>
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-title">
+      <span class="logo-icon">🔍</span>
+      <h2>AI Scan</h2>
     </div>
-    <div id="signedIn" class="hidden">
-      <div class="user-info">
-        <span id="userName"></span>
-        <button id="signOutBtn" class="btn-sm">Sign out</button>
+    <span class="version-badge">GPTZero + ZeroGPT Hybrid</span>
+  </div>
+
+  <!-- Settings Accordion / Panel -->
+  <div class="section">
+    <div class="section-title">OpenRouter API Key (BYOK)</div>
+    <div class="key-row">
+      <input type="password" id="apiKey" placeholder="sk-or-v1-..." autocomplete="off">
+      <button id="saveKey" class="btn btn-primary">Save</button>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+      <span id="keyStatus" class="status"></span>
+      <a href="https://ai-scan-backend.vercel.app/api/auth/openrouter/login" target="_blank" class="link-small">Get Key (1-Click) &rarr;</a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Detection Mode</div>
+    <div class="radio-group">
+      <label class="radio-label">
+        <input type="radio" name="mode" value="hybrid" checked>
+        <span>✨ <strong>Hybrid</strong> (AI + Stylometrics)</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="mode" value="heuristic">
+        <span>⚡ <strong>ZeroGPT Heuristics</strong> (Free/No Key)</span>
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="mode" value="openrouter">
+        <span>🤖 <strong>Multi-Model AI</strong> (GPTZero-Style)</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="section" id="modelSection">
+    <div class="section-title">AI Model</div>
+    <select id="detectionModel" class="form-select">
+      <option value="openai/gpt-4o-mini">OpenAI GPT-4o Mini (Default)</option>
+      <option value="google/gemini-2.5-flash">Google Gemini 2.5 Flash</option>
+      <option value="deepseek/deepseek-chat">DeepSeek V3 (Chat)</option>
+      <option value="anthropic/claude-3.5-haiku">Anthropic Claude 3.5 Haiku</option>
+    </select>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Page Scan Options</div>
+    <div class="options-grid">
+      <label>
+        Min words / para:
+        <input type="number" id="minWords" value="15" min="5" max="200">
+      </label>
+      <label>
+        Max paragraphs:
+        <input type="number" id="maxParagraphs" value="50" min="5" max="200">
+      </label>
+    </div>
+  </div>
+
+  <!-- Primary Action -->
+  <div class="scan-actions">
+    <button id="scanBtn" class="btn btn-primary btn-block">⚡ Scan Active Page</button>
+    <button id="stopBtn" class="btn btn-secondary btn-block hidden" type="button">Stop Scanning</button>
+  </div>
+
+  <!-- Results View -->
+  <div id="results" class="results hidden">
+    <div class="score-card">
+      <div class="score-circle" id="scoreCircle">--</div>
+      <div>
+        <div class="score-label" id="scoreLabel">Overall AI Probability</div>
+        <div id="verdictText" class="verdict-text">Analyzing content...</div>
       </div>
     </div>
-  </div>
 
-  <!-- Divider -->
-  <div class="divider" id="orDivider">
-    <span>or use your own key</span>
-  </div>
-
-  <div class="section" id="apiKeySection">
-    <h2>OpenRouter API Key</h2>
-    <div class="key-row">
-      <input type="password" id="apiKey" placeholder="sk-or-v1-...">
-      <button id="saveKey">Save</button>
+    <!-- Stylometric metric pills -->
+    <div class="metrics-grid">
+      <div class="metric-box">
+        <span class="metric-label">Burstiness</span>
+        <strong id="statBurstiness" class="metric-value">--</strong>
+      </div>
+      <div class="metric-box">
+        <span class="metric-label">Perplexity</span>
+        <strong id="statPerplexity" class="metric-value">--</strong>
+      </div>
+      <div class="metric-box">
+        <span class="metric-label">Vocab (TTR)</span>
+        <strong id="statVocab" class="metric-value">--</strong>
+      </div>
     </div>
-    <span id="keyStatus" class="status"></span>
+
+    <div class="section-title" style="margin-top: 14px;">Paragraphs Highlighted in Page</div>
+    <div id="paragraphResults" class="para-list"></div>
+    <div id="summary" class="summary-box"></div>
   </div>
 
-  <div class="section">
-    <h2>Detection Mode</h2>
-    <label>
-      <input type="radio" name="mode" value="openrouter" checked>
-      OpenRouter (AI-powered)
-    </label>
-    <label>
-      <input type="radio" name="mode" value="heuristic">
-      Heuristic only (offline)
-    </label>
-    <label>
-      <input type="radio" name="mode" value="hybrid">
-      Hybrid (best accuracy)
-    </label>
-  </div>
-
-  <div class="section">
-    <h2>Scan Options</h2>
-    <label>
-      Min paragraph length (words):
-      <input type="number" id="minWords" value="20" min="5" max="500">
-    </label>
-    <label>
-      Max paragraphs to scan:
-      <input type="number" id="maxParagraphs" value="50" min="5" max="200">
-    </label>
-  </div>
-
-  <button id="scanBtn">Scan This Page</button>
-
-  <div id="results" class="results hidden">
-    <h2>Results</h2>
-    <div class="score-container">
-      <div class="score-circle" id="scoreCircle">--</div>
-      <div class="score-label" id="scoreLabel">AI Probability</div>
-    </div>
-    <div id="paragraphResults"></div>
-    <div id="summary"></div>
-  </div>
-
-  <div id="loading" class="loading hidden">Scanning page</div>
+  <div id="loading" class="loading hidden" role="status" aria-live="polite">Scanning page...</div>
 </div>
 <script src="popup.js"></script>
 </body>
